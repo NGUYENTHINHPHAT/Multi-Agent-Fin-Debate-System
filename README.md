@@ -103,6 +103,3 @@ python app.py
 - **State accumulation** — LangGraph `Annotated[List, operator.add]` for message history
 
 ---
-
-*Built as a portfolio demo for AI/ML engineering interviews.*  
-*Demonstrates: LangGraph, multi-agent design, financial domain knowledge, production-quality code.*
