@@ -1,82 +1,99 @@
 # 🚀 Deployment Guide
 
-## DEPLOY TO HUGGINGFACE SPACES (15 minutes)
+## How deployment works
 
-### Step 1: Create the Space
-1. Go to https://huggingface.co/new-space
-2. Name: `finance-agent-debate`
-3. SDK: **Gradio**
-4. Visibility: **Public**
-5. Click "Create Space"
+This repo auto-deploys to a Hugging Face Space on every push to `main`:
 
-### Step 2: Push Code
+```
+push to main → .github/workflows/test.yml (pytest) → .github/workflows/deploy-hf.yml (git push to the HF Space)
+```
+
+`deploy-hf.yml`'s `sync-to-hub` job depends on the `test` job (`needs: test`),
+so a failing test suite blocks the deploy — broken code can't reach the
+Space automatically.
+
+## One-time setup
+
+Already done for the live Space — this is here for forking or setting up
+a new one from scratch.
+
+1. **Create the Space** — https://huggingface.co/new-space, SDK: **Gradio**.
+   Note its URL: `https://huggingface.co/spaces/<hf-username>/<space-name>`.
+
+2. **Generate an HF access token** — https://huggingface.co/settings/tokens
+   → New token → Write access (or a fine-grained token scoped to write on
+   just that Space).
+
+3. **Add it as a GitHub Actions secret on this repo** — repo → Settings →
+   Secrets and variables → Actions → New repository secret → name
+   `HF_TOKEN`, value the token from step 2.
+
+4. **Point `deploy-hf.yml` at your Space** (only needed if deploying
+   somewhere other than the existing target):
+   ```yaml
+   git push https://<anything>:${HF_TOKEN}@huggingface.co/spaces/<hf-username>/<space-name> main
+   ```
+   The username before the `:` is just a placeholder for git's basic-auth
+   URL format — HF authenticates by the token, not that name, so it doesn't
+   need to match any particular account. This is also why the deploy still
+   works from a different GitHub account than the one the Space itself
+   lives under: GitHub hosting and HF Space ownership are independent
+   credentials.
+
+5. **Add the app's runtime secret on the Space itself** (not a GitHub
+   secret — the app reads this at runtime, not at deploy time): Space →
+   Settings → Repository Secrets → `ANTHROPIC_API_KEY`.
+
+That's it — every push to `main` that passes tests re-syncs the Space. No
+manual push to the Space needed day to day.
+
+## Manual deploy (bypassing the Action)
+
 ```bash
-# Clone your new space
-git clone https://huggingface.co/spaces/YOUR_HF_USERNAME/finance-agent-debate
-cd finance-agent-debate
-
-# Copy project files into it
-cp -r /path/to/finance-agents/backend/* .
-cp /path/to/finance-agents/app.py .
-cp /path/to/finance-agents/requirements.txt .
-cp /path/to/finance-agents/README.md .
-
-git add .
-git commit -m "Initial: Multi-Agent Finance Debate System"
-git push
+git remote add hf https://huggingface.co/spaces/<hf-username>/<space-name>
+git push hf main
 ```
 
-### Step 3: Add Your API Key as a Secret
-1. In your Space → Settings → Repository Secrets
-2. Add: `ANTHROPIC_API_KEY` = `sk-ant-YOUR_KEY`
-3. Space auto-restarts and uses the env var
-
-### Step 4: Your Live URL
-```
-https://huggingface.co/spaces/YOUR_USERNAME/finance-agent-debate
-```
-
----
-
-## LOCAL DEVELOPMENT
+## Local Development
 
 ```bash
-cd finance-agents
 pip install -r requirements.txt
 
 # .env file
 echo "ANTHROPIC_API_KEY=sk-ant-..." > .env
 
-# Run Gradio (HF-compatible)
 python app.py
-
-# OR run FastAPI (for custom frontend)
-cd backend
-uvicorn server:app --reload --port 8000
+# → http://localhost:7860
 ```
 
----
+For running the test suite and evals, see [Testing & Evaluation in the
+README](README.md#testing--evaluation).
 
-## POSSIBLE EXTENSIONS TO MENTION
+## Possible Extensions
 
-1. **Streaming to React frontend** — FastAPI SSE + real-time typewriter UI (backend/server.py is ready)
+1. **Streaming to a custom frontend** — `app.py` already streams node-by-node via `graph.astream()` for the Gradio UI; a dedicated FastAPI/SSE backend would let a non-Gradio frontend consume the same stream
 2. **Memory across quarters** — LangGraph persistence lets agents remember Q1/Q2 positions
-3. **Human-in-the-loop** — LangGraph interrupt() to let a human CFO approve the escalation decision
-4. **Red team mode** — add a 5th agent that plays bear case adversary for stress testing
-5. **Backtesting** — run the debate on historical quarters and compare AI recommendation vs. actual results
+3. **Human-in-the-loop** — LangGraph `interrupt()` to let a human CFO approve the escalation decision
+4. **Red team mode** — a 5th agent playing bear-case adversary for stress testing
+5. **Backtesting** — run the debate on historical quarters and compare the AI recommendation vs. actual results
 
----
-
-## FILE STRUCTURE
+## File Structure
 
 ```
-finance-agent-debate/
-├── app.py                 # Gradio UI (HuggingFace Spaces entry point)
-├── agents.py              # LangGraph graph + all agent nodes
-├── data_loader.py         # Scenarios + SEC EDGAR integration
-├── server.py              # FastAPI + SSE streaming (for React frontend)
+Multi-Agent-Fin-System/
+├── app.py                     # Gradio UI — HF Spaces entry point
+├── agents.py                  # LangGraph graph + all agent nodes
+├── data_loader.py             # Scenarios + SEC EDGAR integration
+├── demo_data.py                # Pre-recorded transcript for the "Load Demo" button (no API key needed)
+├── live_data_walkthrough.ipynb # Notebook walking through the SEC EDGAR integration
 ├── requirements.txt
-├── README.md              # HF Spaces README (shown on the Space page)
-├── Dockerfile             # Optional Docker deployment
-└── DEPLOY.md              # This file
+├── requirements-dev.txt        # + pytest, for running tests/evals locally
+├── smoke_test.py                # Manual one-off debate against the real API (not part of pytest)
+├── tests/                       # Mocked pytest suite — see README
+├── evals/                       # Real-API eval harness — see README
+├── README.md                    # HF Spaces README (shown on the Space page)
+├── DEPLOY.md                    # This file
+└── .github/workflows/
+    ├── test.yml                   # Runs pytest on every push/PR
+    └── deploy-hf.yml               # Syncs main to the HF Space after tests pass
 ```
