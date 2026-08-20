@@ -62,7 +62,9 @@ async def test_escalation_yes_propagates_into_state_and_cfo_sees_it(fake_llm_fac
     fake_llm_factory(FakeLLM({
         "Revenue Analyst": "RA position.",
         "Cost Analyst": "CA challenge.",
-        "Chief Risk Officer": "Risk register.\nESCALATE: YES\nUnresolved margin/revenue conflict.",
+        # RO_SYSTEM instructs the model to end with the ESCALATE line, so the
+        # justification is written before it, matching real model output.
+        "Chief Risk Officer": "Unresolved margin/revenue conflict.\nESCALATE: YES\n",
         "CFO of": "## EXECUTIVE SUMMARY\nEscalated.",
     }))
 

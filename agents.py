@@ -131,21 +131,42 @@ Structure your output EXACTLY as:
 [Acknowledge the losing argument in 1 sentence]"""
 
 # ── Escalation Parsing ────────────────────────────────────────────────────────
+_GENERIC_ESCALATION_REASON = "Material disagreement on Q4 assumptions"
+
+
 def parse_escalation(content: str) -> tuple[bool, Optional[str]]:
     """Parse the Risk Officer's ESCALATE: YES/NO decision out of free-form LLM output.
 
-    Returns (escalate, escalation_reason). escalation_reason is the line following
-    the first "escalate ... yes" match, or a generic fallback if none is found.
+    Returns (escalate, escalation_reason).
+
+    RO_SYSTEM explicitly instructs the model to "End with a clear ESCALATE:
+    YES/NO decision" — so the actual justification is almost always the text
+    immediately *before* that line, not after. (An earlier version of this
+    function looked forward instead; since the model reliably puts ESCALATE
+    last, that grabbed the trailing empty string left by the response's final
+    newline, so escalation_reason was silently "" on every real escalation.)
+    We look backward first for the nearest non-blank line, then forward as a
+    fallback in case a future prompt tweak puts the reasoning after the
+    decision instead, and finally a generic fallback if neither exists.
     """
     escalate = "ESCALATE: YES" in content.upper()
-    escalation_reason = None
-    if escalate:
-        lines = content.split('\n')
-        for i, line in enumerate(lines):
-            if "escalate" in line.lower() and "yes" in line.lower():
-                escalation_reason = lines[i + 1] if i + 1 < len(lines) else "Material disagreement on Q4 assumptions"
-                break
-    return escalate, escalation_reason
+    if not escalate:
+        return False, None
+
+    lines = content.split('\n')
+    escalate_idx = next(
+        i for i, line in enumerate(lines) if "escalate" in line.lower() and "yes" in line.lower()
+    )
+
+    for line in reversed(lines[:escalate_idx]):
+        if line.strip():
+            return True, line.strip()
+
+    for line in lines[escalate_idx + 1:]:
+        if line.strip():
+            return True, line.strip()
+
+    return True, _GENERIC_ESCALATION_REASON
 
 
 # ── Agent Nodes ──────────────────────────────────────────────────────────────
