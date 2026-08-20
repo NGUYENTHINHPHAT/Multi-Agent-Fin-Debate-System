@@ -130,6 +130,45 @@ Structure your output EXACTLY as:
 ## DISSENTING VIEW
 [Acknowledge the losing argument in 1 sentence]"""
 
+# ── Escalation Parsing ────────────────────────────────────────────────────────
+_GENERIC_ESCALATION_REASON = "Material disagreement on Q4 assumptions"
+
+
+def parse_escalation(content: str) -> tuple[bool, Optional[str]]:
+    """Parse the Risk Officer's ESCALATE: YES/NO decision out of free-form LLM output.
+
+    Returns (escalate, escalation_reason).
+
+    RO_SYSTEM explicitly instructs the model to "End with a clear ESCALATE:
+    YES/NO decision" — so the actual justification is almost always the text
+    immediately *before* that line, not after. (An earlier version of this
+    function looked forward instead; since the model reliably puts ESCALATE
+    last, that grabbed the trailing empty string left by the response's final
+    newline, so escalation_reason was silently "" on every real escalation.)
+    We look backward first for the nearest non-blank line, then forward as a
+    fallback in case a future prompt tweak puts the reasoning after the
+    decision instead, and finally a generic fallback if neither exists.
+    """
+    escalate = "ESCALATE: YES" in content.upper()
+    if not escalate:
+        return False, None
+
+    lines = content.split('\n')
+    escalate_idx = next(
+        i for i, line in enumerate(lines) if "escalate" in line.lower() and "yes" in line.lower()
+    )
+
+    for line in reversed(lines[:escalate_idx]):
+        if line.strip():
+            return True, line.strip()
+
+    for line in lines[escalate_idx + 1:]:
+        if line.strip():
+            return True, line.strip()
+
+    return True, _GENERIC_ESCALATION_REASON
+
+
 # ── Agent Nodes ──────────────────────────────────────────────────────────────
 async def revenue_analyst_node(state: FinanceState) -> dict:
     llm = get_llm(temperature=0.7)
@@ -237,16 +276,31 @@ Provide: (1) your independent cost view, (2) specific points where you disagree 
 
 async def revenue_rebuttal_node(state: FinanceState) -> dict:
     llm = get_llm(temperature=0.8)
+    scenario = state["scenario"]
+    fin = scenario.get("financials", {})
+    opportunities = scenario.get("opportunities", [])
+
+    # NRR is a SaaS-specific metric — not every scenario (e.g. REIT, manufacturing)
+    # has it, so this must degrade gracefully instead of indexing the key directly.
+    nrr = fin.get("net_revenue_retention")
+    nrr_line = (
+        f"- NRR of {nrr}% means existing customers will expand"
+        if nrr is not None
+        else "- Retention/occupancy trends remain a positive tailwind"
+    )
+    # Cite whatever opportunities the scenario actually has, generically —
+    # don't assume a fixed count or hardcode sector-specific labels like
+    # "AI module" / "Federal pipeline" onto opportunities from other sectors.
+    opportunity_lines = "\n".join(f"- {o}" for o in opportunities[:2]) or "- No major upside catalysts on file"
 
     prompt = f"""The Cost Analyst has challenged your Q4 projections. Rebut their concerns point by point.
 
 COST ANALYST'S CHALLENGE:
 {state['cost_analysis']}
 
-Your Q3 context:
-- NRR of {state['scenario']['financials']['net_revenue_retention']}% means existing customers will expand
-- AI module at ${state['scenario']['opportunities'][0]}
-- Federal pipeline: {state['scenario']['opportunities'][1]}
+Your context:
+{nrr_line}
+{opportunity_lines}
 
 Provide a sharp, data-backed rebuttal. Acknowledge 1-2 valid points from CA but hold your guidance."""
 
@@ -331,14 +385,7 @@ Produce your formal risk register. Score each risk (LIKELIHOOD: Low/Med/High, IM
     ])
 
     # Parse escalation decision from response
-    escalate = "ESCALATE: YES" in response.content.upper()
-    escalation_reason = None
-    if escalate:
-        lines = response.content.split('\n')
-        for i, line in enumerate(lines):
-            if "escalate" in line.lower() and "yes" in line.lower():
-                escalation_reason = lines[i+1] if i+1 < len(lines) else "Material disagreement on Q4 assumptions"
-                break
+    escalate, escalation_reason = parse_escalation(response.content)
 
     msg: AgentMessage = {
         "agent": "Risk Officer",
@@ -374,6 +421,17 @@ async def cfo_synthesis_node(state: FinanceState) -> dict:
 
     next_period = scenario.get("next_period", "Next Quarter")
 
+    # The full-year target metric is sector-dependent: SaaS/industrial scenarios
+    # guide on revenue, but REITs guide on FFO per share — a different key and
+    # unit entirely. Build the line from whichever key the scenario actually has
+    # instead of assuming "fy2024_revenue_target" exists everywhere.
+    if "fy2024_revenue_target" in fwd:
+        fy_target_line = f"- Full-Year Revenue Target: ${fwd['fy2024_revenue_target']:,}"
+    elif "fy2024_ffo_per_share_target" in fwd:
+        fy_target_line = f"- Full-Year FFO/Share Target: ${fwd['fy2024_ffo_per_share_target']:.2f}"
+    else:
+        fy_target_line = ""
+
     prompt = f"""You are the CFO. Produce the board recommendation for {scenario['company']} — {next_period} outlook.
 
 {escalation_note}
@@ -392,7 +450,7 @@ FULL DEBATE RECORD:
 CURRENT GUIDANCE:
 - {next_period} Revenue Range: ${fwd['q4_revenue_low']:,} – ${fwd['q4_revenue_high']:,}
 - {next_period} OpEx Target: ${fwd['q4_opex_projected']:,}
-- Full-Year Target: ${fwd['fy2024_revenue_target']:,}
+{fy_target_line}
 
 DISAGREEMENT SCORE: {state.get('disagreement_score', 0.5):.0%} tension between analysts
 
@@ -439,8 +497,7 @@ def build_graph():
 
     return graph.compile()
 
-'''
-#testing
+
 # ── Runner ────────────────────────────────────────────────────────────────────
 async def run_debate(scenario: dict = None, stream_callback=None) -> FinanceState:
     if scenario is None:
@@ -485,4 +542,3 @@ if __name__ == "__main__":
         print(result["final_recommendation"])
 
     asyncio.run(main())
-'''
