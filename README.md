@@ -197,6 +197,31 @@ end-to-end eval run doesn't.
   a parametrized regression test across all 3 built-in scenarios so a future
   scenario-specific-field bug like this fails fast and free in `pytest`,
   instead of only surfacing on a real, paid eval run.
+- **`escalation_reason` was silently blank on all 6/6 real escalations.**
+  `RO_SYSTEM` tells the model to end its response with the `ESCALATE:
+  YES/NO` line, so the actual justification is the text *before* it —
+  `parse_escalation()` was looking at the line *after* instead, which on
+  real output was just the empty string left by the response's own
+  trailing newline. Every escalation the CFO/board saw was missing its
+  "why." Fixed in `agents.py` (`parse_escalation` now looks backward for
+  the nearest non-blank line first), with a named regression test
+  (`tests/test_escalation.py::test_escalate_reason_is_not_the_trailing_blank_line`).
+
+### Current status (as of the last real run, 2026-08-20)
+
+| Item | Status |
+|---|---|
+| Format compliance | ✅ Verified live — 6/6 |
+| REIT1 crash bugs (NRR / fy-target KeyErrors) | ✅ Fixed and verified live — re-run after the fix completed all 6/6 |
+| `escalation_reason` blank-string bug | 🔧 Fixed, verified only against a synthetic reproduction of the real output shape — **not yet re-confirmed against a live API call** |
+| Escalation calibration (does it actually track severity?) | ⚠️ Unresolved — the one live run escalated 3/3 baseline and 3/3 stress, which doesn't discriminate, but `n=1` per variant isn't statistically meaningful either way |
+| Groundedness heuristic (8–47 flags/run) | ⚠️ Unresolved — flagged figures haven't been manually read against the transcripts to sort legitimate derived numbers from actual hallucination |
+
+The last two rows need either `--repeats` (for a real escalation rate) or a
+manual transcript read (for groundedness) to resolve — both require another
+live run against the Anthropic API, which hasn't been done since the fixes
+above landed. Until then, treat escalation calibration and output
+groundedness as open questions, not verified behavior.
 
 ## Design Patterns Demonstrated
 
