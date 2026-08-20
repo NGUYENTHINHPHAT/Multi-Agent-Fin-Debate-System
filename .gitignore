@@ -8,3 +8,5 @@ __pycache__/
 venv/
 .idea/
 interview_qa.pdf
+evals/results/
+.pytest_cache/
